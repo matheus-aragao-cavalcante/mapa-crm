@@ -1,7 +1,12 @@
+// next.config.mjs
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === 'production';
+
 const nextConfig = {
-  // gera site estático (para embutir/servir onde quiser)
   output: 'export',
+  images: { unoptimized: true },
+  trailingSlash: true,
+  assetPrefix: isProd ? './' : '',
 };
 
-export default nextConfig;
+export default nextConfig;  // <<< ESM
