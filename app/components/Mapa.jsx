@@ -63,23 +63,36 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function colorScale(value, max) {
-  if (!value || !max) return "#dbeafe";
+const HEAT_STOPS = [
+  { value: 0, color: [239, 246, 255] },
+  { value: 100, color: [191, 219, 254] },
+  { value: 200, color: [96, 165, 250] },
+  { value: 300, color: [37, 99, 235] },
+  { value: 400, color: [29, 78, 216] },
+  { value: 500, color: [23, 37, 84] },
+];
 
-  const t = Math.min(1, value / max);
+function colorScale(value) {
+  const n = Number(value || 0);
 
-  const start = [219, 234, 254];
-  const mid = [96, 165, 250];
-  const end = [30, 64, 175];
+  if (!n || n <= 0) return "rgb(239, 246, 255)";
+  if (n >= 500) return "rgb(23, 37, 84)";
 
-  const a = t < 0.55 ? start : mid;
-  const b = t < 0.55 ? mid : end;
-  const k = t < 0.55 ? t / 0.55 : (t - 0.55) / 0.45;
+  const upperIndex = HEAT_STOPS.findIndex((stop) => n <= stop.value);
+  const lower = HEAT_STOPS[Math.max(0, upperIndex - 1)];
+  const upper = HEAT_STOPS[upperIndex];
 
-  const mix = (x, y) => Math.round(x + (y - x) * k);
+  const range = upper.value - lower.value || 1;
+  const t = (n - lower.value) / range;
 
-  return `rgb(${mix(a[0], b[0])}, ${mix(a[1], b[1])}, ${mix(a[2], b[2])})`;
+  const mix = (a, b) => Math.round(a + (b - a) * t);
+
+  return `rgb(${mix(lower.color[0], upper.color[0])}, ${mix(
+    lower.color[1],
+    upper.color[1]
+  )}, ${mix(lower.color[2], upper.color[2])})`;
 }
+
 
 function toRoman(value) {
   const num = Number(value);
@@ -130,6 +143,58 @@ function getRegionalRoman(value) {
 function cloneBounds(bounds) {
   return L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
 }
+
+function getResponsiveFitOptions({
+  viewport,
+  regionalFilter,
+  mode,
+  isSelection = false,
+}) {
+  const width = viewport?.width || 1200;
+  const height = viewport?.height || 800;
+
+  const isLandscapePhone = width <= 760 && height <= 520;
+  const isPhone = width <= 560;
+  const isTablet = width <= 900;
+
+  const baseMaxZoom =
+    mode === "regional" ? 15 : regionalFilter === "all" ? 15 : 13.25;
+
+  if (isLandscapePhone) {
+    return {
+      paddingTopLeft: [14, 76],
+      paddingBottomRight: [isSelection ? 308 : 14, 14],
+      maxZoom: Math.min(baseMaxZoom, regionalFilter === "all" ? 11.5 : 12),
+      animate: true,
+    };
+  }
+
+  if (isPhone) {
+    return {
+      paddingTopLeft: [14, 156],
+      paddingBottomRight: [14, isSelection ? 286 : 72],
+      maxZoom: Math.min(baseMaxZoom, regionalFilter === "all" ? 11.4 : 12),
+      animate: true,
+    };
+  }
+
+  if (isTablet) {
+    return {
+      paddingTopLeft: [18, 154],
+      paddingBottomRight: [isSelection ? 24 : 18, isSelection ? 260 : 74],
+      maxZoom: Math.min(baseMaxZoom, 12),
+      animate: true,
+    };
+  }
+
+  return {
+    paddingTopLeft: [28, 120],
+    paddingBottomRight: [430, 48],
+    maxZoom: baseMaxZoom,
+    animate: true,
+  };
+}
+
 
 function makeAreaLabelIcon(label, active = false) {
   const safeLabel = escapeHtml(label);
@@ -334,6 +399,13 @@ export default function Mapa() {
 
   const mapRef = useRef(null);
   const geoRef = useRef(null);
+  const regionalLayersRef = useRef(new Map());
+
+  const [viewport, setViewport] = useState({
+    width: 1200,
+    height: 800,
+  });
+
 
   useEffect(() => {
     let alive = true;
@@ -394,6 +466,32 @@ export default function Mapa() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    function updateViewport() {
+      const nextViewport = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+
+      setViewport(nextViewport);
+
+      window.requestAnimationFrame(() => {
+        mapRef.current?.invalidateSize?.();
+      });
+    }
+
+    updateViewport();
+
+    window.addEventListener("resize", updateViewport);
+    window.addEventListener("orientationchange", updateViewport);
+
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+      window.removeEventListener("orientationchange", updateViewport);
+    };
+  }, []);
+
 
   const regionalStats = useMemo(() => {
     if (!stats) return {};
@@ -592,27 +690,38 @@ export default function Mapa() {
   }, [selected, stats, regionalStats]);
 
   const fitToGeo = useCallback(() => {
-  const map = mapRef.current;
-  const layer = geoRef.current;
+    const map = mapRef.current;
+    const layer = geoRef.current;
 
-  if (!map || !layer?.getBounds) return;
+    if (!map || !layer?.getBounds) return;
 
-  const bounds = layer.getBounds();
+    map.invalidateSize?.();
 
-  if (bounds?.isValid()) {
-    map.fitBounds(bounds, {
-      paddingTopLeft: [28, 120],
-      paddingBottomRight: [430, 48],
-      maxZoom: regionalFilter === "all" ? 12 : 12.25,
-      animate: true,
-    });
-  }
-}, [regionalFilter]);
+    const bounds = layer.getBounds();
+
+    if (bounds?.isValid()) {
+      map.fitBounds(
+        bounds,
+        getResponsiveFitOptions({
+          viewport,
+          regionalFilter,
+          mode,
+          isSelection: false,
+        })
+      );
+    }
+  }, [regionalFilter, mode, viewport]);
+
 
   useEffect(() => {
-    const timer = setTimeout(() => fitToGeo(), 80);
+    const timer = setTimeout(() => {
+      mapRef.current?.invalidateSize?.();
+      fitToGeo();
+    }, 120);
+
     return () => clearTimeout(timer);
-  }, [visibleGeo, fitToGeo]);
+  }, [visibleGeo, viewport, fitToGeo]);
+
 
   const getFeatureValue = useCallback(
     (feature) => {
@@ -650,18 +759,51 @@ export default function Mapa() {
     (feature) => {
       const value = getFeatureValue(feature);
       const selectedFeature = isFeatureSelected(feature);
+      const regionalMode = mode === "regional";
 
       return {
-        color: selectedFeature ? "#0f172a" : "#2563eb",
-        weight: selectedFeature ? 3 : mode === "regional" ? 1.1 : 1.25,
-        fillColor: colorScale(value, activeMax),
-        fillOpacity: value ? (selectedFeature ? 0.58 : 0.36) : 0.08,
-        opacity: 0.95,
-        dashArray: mode === "regional" ? "0" : "0",
+        color: regionalMode
+          ? selectedFeature
+            ? "rgba(15, 23, 42, 0.42)"
+            : "rgba(37, 99, 235, 0.22)"
+          : selectedFeature
+            ? "#0f172a"
+            : "#2563eb",
+        weight: regionalMode ? (selectedFeature ? 0.85 : 0.55) : selectedFeature ? 3 : 1.25,
+        fillColor: colorScale(value),
+        fillOpacity: value ? (selectedFeature ? 0.64 : regionalMode ? 0.48 : 0.38) : 0.08,
+        opacity: regionalMode ? (selectedFeature ? 0.9 : 0.55) : 0.95,
+        dashArray: "0",
       };
     },
-    [getFeatureValue, isFeatureSelected, activeMax, mode]
+    [getFeatureValue, isFeatureSelected, mode]
   );
+
+  const setRegionalHover = useCallback(
+    (regionalKey, hovered) => {
+      const layers = regionalLayersRef.current.get(regionalKey);
+
+      if (!layers) return;
+
+      layers.forEach((targetLayer) => {
+        if (hovered) {
+          targetLayer.setStyle({
+            color: "rgba(15, 23, 42, 0.55)",
+            weight: 1.25,
+            fillOpacity: 0.66,
+            opacity: 0.95,
+          });
+
+          targetLayer.bringToFront?.();
+        } else if (targetLayer.feature) {
+          targetLayer.setStyle(baseStyle(targetLayer.feature));
+        }
+      });
+    },
+    [baseStyle]
+  );
+
+
 
   const handleSelectFeature = useCallback(
     (feature, layer) => {
@@ -691,16 +833,22 @@ export default function Mapa() {
       const map = mapRef.current;
 
       if (map && targetBounds?.isValid()) {
-        map.fitBounds(targetBounds, {
-          paddingTopLeft: [28, 120],
-          paddingBottomRight: [430, 80],
-          maxZoom: mode === "regional" ? 11.8 : 12.25,
-          animate: true,
-        });
+        map.invalidateSize?.();
+
+        map.fitBounds(
+          targetBounds,
+          getResponsiveFitOptions({
+            viewport,
+            regionalFilter,
+            mode,
+            isSelection: true,
+          })
+        );
       }
     },
-    [stats, mode, getRegionalBounds]
+    [stats, mode, getRegionalBounds, viewport, regionalFilter]
   );
+
 
   const onEach = useCallback(
     (feature, layer) => {
@@ -709,28 +857,42 @@ export default function Mapa() {
 
       if (!id || !item) return;
 
+      layer.feature = feature;
+
       const total = Number(item.quantidade || 0);
       const regional = item.regionalFormatada;
+
+      if (mode === "regional") {
+        if (!regionalLayersRef.current.has(regional)) {
+          regionalLayersRef.current.set(regional, new Set());
+        }
+
+        regionalLayersRef.current.get(regional).add(layer);
+
+        layer.on("remove", () => {
+          regionalLayersRef.current.get(regional)?.delete(layer);
+        });
+      }
 
       const tooltip =
         mode === "regional"
           ? `
-            <div class="mapTooltip">
-              <strong>${escapeHtml(regional)}</strong>
-              <span>Total agregado: ${escapeHtml(
+          <div class="mapTooltip">
+            <strong>${escapeHtml(regional)}</strong>
+            <span>Total agregado: ${escapeHtml(
             regionalStats?.[regional]?.quantidade || 0
           )}</span>
-              <small>Clique para abrir o painel da regional</small>
-            </div>
-          `
+            <small>Clique para abrir o painel da regional</small>
+          </div>
+        `
           : `
-            <div class="mapTooltip">
-              <strong>Território ${escapeHtml(id)}</strong>
-              <span>${escapeHtml(regional)}</span>
-              <span>Total: ${escapeHtml(total)}</span>
-              <small>Clique para abrir o histórico</small>
-            </div>
-          `;
+          <div class="mapTooltip">
+            <strong>Território ${escapeHtml(id)}</strong>
+            <span>${escapeHtml(regional)}</span>
+            <span>Total: ${escapeHtml(total)}</span>
+            <small>Clique para abrir o histórico</small>
+          </div>
+        `;
 
       layer.bindTooltip(tooltip, {
         sticky: true,
@@ -741,6 +903,11 @@ export default function Mapa() {
 
       layer.on({
         mouseover: (event) => {
+          if (mode === "regional") {
+            setRegionalHover(regional, true);
+            return;
+          }
+
           event.target.setStyle({
             weight: 3,
             fillOpacity: 0.58,
@@ -750,6 +917,11 @@ export default function Mapa() {
         },
 
         mouseout: (event) => {
+          if (mode === "regional") {
+            setRegionalHover(regional, false);
+            return;
+          }
+
           event.target.setStyle(baseStyle(feature));
         },
 
@@ -758,8 +930,16 @@ export default function Mapa() {
         },
       });
     },
-    [stats, mode, regionalStats, baseStyle, handleSelectFeature]
+    [
+      stats,
+      mode,
+      regionalStats,
+      baseStyle,
+      handleSelectFeature,
+      setRegionalHover,
+    ]
   );
+
 
   function resetView() {
     setSelected(null);
@@ -790,12 +970,12 @@ export default function Mapa() {
         wheelDebounceTime={90}
         scrollWheelZoom
         zoomControl={false}
+        attributionControl={false}
         preferCanvas
         className="mapCanvas"
       >
         <TileLayer
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          attribution="&copy; OpenStreetMap contributors"
         />
 
         <ZoomControl position="topleft" />
@@ -952,6 +1132,11 @@ export default function Mapa() {
   top: 132px;
   left: 18px;
 }
+
+.leaflet-top .leaflet-control {
+	margin-top: 26px;
+	}
+
 
 .leaflet-bottom.leaflet-left {
   bottom: 112px;
@@ -1383,31 +1568,279 @@ export default function Mapa() {
           font-weight: 700;
         }
 
-        @media (max-width: 900px) {
-          .topBar {
-            align-items: flex-start;
-            flex-direction: column;
-          }
+        .leaflet-control-attribution {
+  display: none !important;
+}
 
-          .topControls {
-            width: 100%;
-            justify-content: flex-start;
-          }
+.mapPage {
+  height: 100svh;
+  height: 100dvh;
+}
 
-          .detailsPanel {
-            top: auto;
-            left: 12px;
-            right: 12px;
-            bottom: 12px;
-            width: auto;
-            max-height: 46vh;
-            border-radius: 20px;
-          }
+@media (max-width: 900px) {
+  .mapPage {
+    height: 100svh;
+    height: 100dvh;
+  }
 
-          .legend {
-            display: none;
-          }
-        }
+  .topBar {
+    top: max(8px, env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    z-index: 1120;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 18px;
+  }
+
+  .topBar h1 {
+    font-size: 18px;
+  }
+
+  .sourceText {
+    font-size: 10px;
+  }
+
+  .topControls {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .segmented {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .segmented button {
+    flex: 1;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  select {
+    width: 100%;
+    min-width: 0;
+    height: 40px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .ghostButton {
+    width: 100%;
+    height: 40px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .detailsPanel {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: min(42svh, 315px);
+    padding: 14px;
+    border-radius: 18px;
+    z-index: 1060;
+  }
+
+  .detailsPanel.compact {
+    display: none;
+  }
+
+  .panelHeader h2 {
+    font-size: 19px;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 12px 0;
+  }
+
+  .metricCard {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .metricCard strong {
+    font-size: 20px;
+  }
+
+  .historyRow {
+    grid-template-columns: 88px 1fr 28px;
+    gap: 6px;
+  }
+
+  .historyMonth,
+  .historyValue {
+    font-size: 11px;
+  }
+
+  .legend {
+    display: none;
+  }
+
+  .leaflet-top.leaflet-left {
+    top: 148px;
+    left: 8px;
+  }
+
+  .leaflet-bottom.leaflet-left {
+    bottom: 8px;
+    left: 8px;
+  }
+
+  .mapTooltip {
+    min-width: 140px;
+    max-width: 180px;
+  }
+
+  .errorToast {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    transform: none;
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) and (max-height: 520px) {
+  .topBar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 14px;
+  }
+
+  .topBar h1 {
+    font-size: 16px;
+    white-space: nowrap;
+  }
+
+  .sourceText {
+    display: none;
+  }
+
+  .topControls {
+    flex: 1;
+    width: auto;
+    display: grid;
+    grid-template-columns: auto minmax(128px, 1fr) auto;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .segmented {
+    grid-column: auto;
+  }
+
+  .segmented button {
+    padding: 7px 9px;
+    font-size: 11px;
+  }
+
+  select {
+    height: 34px;
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+
+  .ghostButton {
+    height: 34px;
+    padding: 6px 10px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .detailsPanel {
+    top: 72px;
+    right: 8px;
+    left: auto;
+    bottom: 8px;
+    width: min(300px, 44vw);
+    max-height: none;
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .detailsPanel.compact {
+    display: none;
+  }
+
+  .panelHeader {
+    margin-bottom: 10px;
+  }
+
+  .panelHeader h2 {
+    font-size: 17px;
+  }
+
+  .panelSubtitle {
+    font-size: 11px;
+  }
+
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin: 10px 0;
+  }
+
+  .metricCard {
+    padding: 8px;
+  }
+
+  .metricCard span {
+    font-size: 10px;
+  }
+
+  .metricCard strong {
+    font-size: 18px;
+  }
+
+  .insightBox {
+    margin-bottom: 10px;
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+
+  .panelSection {
+    margin-top: 12px;
+  }
+
+  .sectionHeader h3 {
+    font-size: 13px;
+  }
+
+  .historyRow {
+    grid-template-columns: 76px 1fr 24px;
+  }
+
+  .chips {
+    gap: 5px;
+  }
+
+  .chip {
+    padding: 5px 7px;
+    font-size: 10px;
+  }
+
+  .leaflet-top.leaflet-left {
+    top: 72px;
+    left: 8px;
+  }
+
+  .leaflet-bottom.leaflet-left {
+    bottom: 8px;
+    left: 8px;
+  }
+}
+
       `}</style>
     </div>
   );
