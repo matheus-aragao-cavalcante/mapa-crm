@@ -1,11 +1,11 @@
 {
     "https://api.shinyapps.io": {
         "server_url": "https://api.shinyapps.io",
-        "filename": "C:\\Users\\suporte\\Desktop\\Projetos VS\\git\\mapa-crm\\shiny_wrap",
+        "filename": "/workspaces/mapa-crm/shiny_wrap",
         "app_url": "https://matheus-aragao-cavalcante-2002.shinyapps.io/mapa-crm/",
         "app_id": "15542256",
         "app_guid": null,
-        "title": "mapa-crm",
+        "title": "mapa-crm.",
         "app_mode": "python-shiny",
         "app_store_version": 1
     }
