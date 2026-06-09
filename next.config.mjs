@@ -9,4 +9,4 @@ const nextConfig = {
   assetPrefix: isProd ? './' : '',
 };
 
-export default nextConfig;  // <<< ESM
+export default nextConfig;  // ESM

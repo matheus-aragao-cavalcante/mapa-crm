@@ -1,1 +1,1 @@
-shiny
+shiny>=0.7
