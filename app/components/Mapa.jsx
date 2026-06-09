@@ -2984,7 +2984,7 @@ const getItemQuantity = useCallback(
           line-height: 1;
 
           border: none;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
         }
 
         .mapFloatingActions {
